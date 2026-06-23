@@ -7,7 +7,8 @@ import {
   changePassSchema,
   loginSchema,
   registerSchema,
-  verifyChangeEmailSchema,
+  forgotPassSchema,
+  setNewPassSchema,
 } from "../validators/authSchema.js";
 import { sendWelcomeEmail } from "../services/email/sendWelcomeEmail.js";
 
@@ -18,15 +19,13 @@ export const Register = async (req, res, next) => {
   if (!success) {
     return res.status(400).json({ error: error.issues[0].message });
   }
-  const { username, email, password, otp } = data;
+  const { username, email, password } = data;
 
-  const isOtpAvailable = await OTP.findOne({ email, otp });
+  const isOtpVerified = await OTP.findOne({ email, purpose: "REGISTER", isVerified: true });
 
-  if (!isOtpAvailable) {
-    return res.status(400).json({ error: "Invalid or Expired OTP!!" });
+  if (!isOtpVerified) {
+    return res.status(400).json({ error: "Please verify your email first!" });
   }
-
-  const session = await mongoose.startSession();
 
   const hashedPassword = await bcrypt.hash(password, 11);
 
@@ -42,7 +41,7 @@ export const Register = async (req, res, next) => {
 
     await sendWelcomeEmail(email, username, userId.toString());
 
-    await isOtpAvailable.deleteOne();
+    await isOtpVerified.deleteOne();
     res.status(201).json({ message: "User Registered" });
   } catch (error) {
     if (error.code === 121) {
@@ -235,20 +234,26 @@ export const changePass = async (req, res) => {
     return res.status(400).json({ error: "User not found" });
   }
 
-  const userHasHashedPassword = !!user.password;
+  if (!user.password) {
+    return res.status(400).json({ error: "This account does not have a password" });
+  }
 
-  if (userHasHashedPassword) {
-    if (!oldPassword) {
-      return res.status(400).json({ error: "Old password is required" });
-    }
+  const otpInfo = await OTP.findOne({
+    email: user.email,
+    purpose: "CHANGE_PASSWORD",
+    isVerified: true,
+  });
 
-    const isAuthenticated = await bcrypt.compare(oldPassword, user.password);
+  if (!otpInfo) {
+    return res.status(403).json({ error: "Please verify the email first!" });
+  }
 
-    if (!isAuthenticated) {
-      return res
-        .status(401)
-        .json({ error: "You have entered a wrong password" });
-    }
+  const isAuthenticated = await bcrypt.compare(oldPassword, user.password);
+
+  if (!isAuthenticated) {
+    return res
+      .status(401)
+      .json({ error: "You have entered a wrong password" });
   }
 
   try {
@@ -261,14 +266,12 @@ export const changePass = async (req, res) => {
       `@userId:{${req.user._id}}`,
     );
 
-    if (!data.documents.length) {
-      return res.status(204).json({ error: "No session found" });
+    if (data.documents.length) {
+      const keys = data.documents.map((elem) => elem.id);
+      await redisClient.del(keys);
     }
-
-    const keys = data.documents.map((elem) => elem.id);
-
-    await redisClient.del(keys);
     await redisClient.json.del(`profile:${req.user._id}`);
+    await otpInfo.deleteOne();
 
     res.clearCookie("sid", {
       httpOnly: true,
@@ -280,70 +283,115 @@ export const changePass = async (req, res) => {
   }
 };
 
-//CHANGE EMAIL ID
-export const changeEmail = async (req, res) => {
-  const { success, data, error } = verifyChangeEmailSchema.safeParse(req.body);
+//FORGOT PASSWORD
+export const forgotPassword = async (req, res) => {
+  const { success, data, error } = forgotPassSchema.safeParse(req.body);
 
   if (!success) {
     return res.status(400).json({ error: error.issues[0].message });
   }
 
-  const { newEmail, oldEmailOtp, newEmailOtp, password } = data;
+  const { email, newPassword } = data;
+
+  const otpInfo = await OTP.findOne({
+    email,
+    purpose: "FORGOT_PASSWORD",
+    isVerified: true,
+  });
+
+  if (!otpInfo) {
+    return res.status(403).json({ error: "Please verify the email first!" });
+  }
+
+  if (!otpInfo.isEmailRegistered) {
+    return res.status(403).json({
+      error: "You cannot change the password of an unregistered email",
+    });
+  }
 
   try {
-    const userInfo = await User.findById(req.user._id);
-    if (!userInfo) {
+    const user = await User.findOne({ email });
+    if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
 
-    if (userInfo.email === newEmail) {
-      return res.status(400).json({
-        error: "New email must be different from current email",
-      });
-    }
+    const hashedPassword = await bcrypt.hash(newPassword, 11);
+    user.password = hashedPassword;
+    await user.save();
 
-    const emailExists = await User.findOne({ email: newEmail });
-    if (emailExists) {
-      return res.status(409).json({
-        error: "Email already in use",
-      });
-    }
+    const data = await redisClient.ft.search(
+      "userIdIndex",
+      `@userId:{${user._id}}`,
+    );
 
-    const otpInfo = await OTP.findOne({
-      email: userInfo.email,
-      newEmail,
-      otp: oldEmailOtp,
-      newEmailOtp,
-      purpose: "security",
+    if (data.documents.length) {
+      const keys = data.documents.map((elem) => elem.id);
+      await redisClient.del(keys);
+    }
+    await redisClient.json.del(`profile:${user._id}`);
+    await otpInfo.deleteOne();
+
+    return res.status(200).json({ message: "Your password changed successfully", success: true });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: "Failed to reset password" });
+  }
+};
+
+//SET NEW PASSWORD (Google User setting password for first time)
+export const setNewPass = async (req, res) => {
+  const { success, data, error } = setNewPassSchema.safeParse(req.body);
+
+  if (!success) {
+    return res.status(400).json({ error: error.issues[0].message });
+  }
+
+  const { newPassword } = data;
+
+  const user = await User.findById(req.user._id);
+
+  if (!user) {
+    return res.status(400).json({ error: "User not found" });
+  }
+
+  if (user.password) {
+    return res.status(400).json({ error: "You already have a password" });
+  }
+
+  const otpInfo = await OTP.findOne({
+    email: user.email,
+    purpose: "SET_PASSWORD",
+    isVerified: true,
+  });
+
+  if (!otpInfo) {
+    return res.status(403).json({ error: "Please verify the email first!" });
+  }
+
+  try {
+    const hashedPassword = await bcrypt.hash(newPassword, 11);
+    user.password = hashedPassword;
+    await user.save();
+
+    const data = await redisClient.ft.search(
+      "userIdIndex",
+      `@userId:{${req.user._id}}`,
+    );
+
+    if (data.documents.length) {
+      const keys = data.documents.map((elem) => elem.id);
+      await redisClient.del(keys);
+    }
+    await redisClient.json.del(`profile:${req.user._id}`);
+    await otpInfo.deleteOne();
+
+    res.clearCookie("sid", {
+      httpOnly: true,
     });
 
-    if (!otpInfo) {
-      return res.status(400).json({
-        error: "Invalid or expired OTP",
-      });
-    }
-
-    const isAuthenticated = await bcrypt.compare(password, userInfo.password);
-
-    if (!isAuthenticated) {
-      return res.status(401).json({
-        error: "Incorrect password",
-      });
-    }
-
-    await User.findByIdAndUpdate(req.user._id, {
-      $set: { email: newEmail },
-    });
-
-    await OTP.deleteOne({ _id: otpInfo._id });
-
-    return res.status(200).json({
-      success: true,
-      message: "Email changed successfully",
-    });
-  } catch (err) {
-    return res.status(500).json({
-      error: "Failed to change email",
-    });
+    return res.status(200).json({ message: "Password set successfully", success: true });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: "Failed to set password" });
   }
 };

@@ -156,7 +156,11 @@ export const adminBlock = async (req, res) => {
     return res.status(400).json({ error: "User not found!" });
   }
 
-  if (!user.isBlocked && (req.user.role === "Admin" || "Owner")) {
+  if (req.user.role !== "ADMIN") {
+    return res.status(403).json({ error: "Insufficient permission" });
+  }
+
+  if (!user.isBlocked) {
     const data = await redisClient.ft.search(
       "userIdIndex",
       `@userId:{${userId}}`,
@@ -168,15 +172,11 @@ export const adminBlock = async (req, res) => {
     }
     user.isBlocked = true;
     await user.save();
-    res.status(200).json({ message: `${user.username} is blocked` });
-  } else if (user.isBlocked && req.user.role === "Admin") {
-    res
-      .status(400)
-      .json({ error: "You don't have permission to unblock a user" });
-  } else if (user.isBlocked && req.user.role === "Owner") {
+    return res.status(200).json({ message: `${user.username} is blocked` });
+  } else {
     user.isBlocked = false;
     await user.save();
-    res.status(200).json({ message: `${user.username} is unblocked` });
+    return res.status(200).json({ message: `${user.username} is unblocked` });
   }
 };
 
@@ -204,16 +204,15 @@ export const changeRole = async (req, res) => {
     return res.status(403).json({ error: "You can't change your own role" });
   }
 
-  //USER CASE
-  if (ownRole === "User") {
+  //ADMIN CHECK
+  if (ownRole !== "ADMIN") {
     return res.status(403).json({ error: "Insufficient permission" });
   }
 
   const roleRank = {
-    User: 1,
-    Manager: 2,
-    Admin: 3,
-    Owner: 4,
+    STUDENT: 1,
+    CREATOR: 2,
+    ADMIN: 3,
   };
 
   if (roleRank[ownRole] <= roleRank[user.role]) {
@@ -238,7 +237,9 @@ export const changeRole = async (req, res) => {
 
     const keys = data.documents.map((elem) => elem.id);
 
-    await redisClient.del(keys);
+    if (keys.length > 0) {
+      await redisClient.del(keys);
+    }
 
     res.status(200).json({ message: "User role changed successfully" });
   } catch (error) {

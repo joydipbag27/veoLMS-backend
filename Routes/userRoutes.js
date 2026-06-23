@@ -1,7 +1,8 @@
 import express from "express";
-import { checkAuth, checkIfBlocked } from "../middlewares/authMiddleware.js";
+import { authenticate } from "../middlewares/authenticate.js";
 import {
-  changeEmail,
+  forgotPassword,
+  setNewPass,
   changePass,
   CheckUserName,
   Login,
@@ -17,32 +18,31 @@ router.post("/register", customRateLimit(1, 2), Register);
 
 router.post("/login", customRateLimit(1, 5), Login);
 
+router.post("/forgotPassword", customRateLimit(1, 3), forgotPassword);
+
 router.get(
   "/",
   customRateLimit(1, 20),
-  checkAuth,
-  checkIfBlocked,
+  authenticate,
   CheckUserName,
 );
 
-router.post("/logout", checkAuth, Logout);
+router.post("/logout", authenticate, Logout);
 
-router.post("/logoutall", checkAuth, LogoutAllDevices);
+router.post("/logoutall", authenticate, LogoutAllDevices);
 
 router.patch(
   "/changePassword",
   customRateLimit(1, 3),
-  checkAuth,
-  checkIfBlocked,
+  authenticate,
   changePass,
 );
 
 router.patch(
-  "/changeEmail",
+  "/setPassword",
   customRateLimit(1, 3),
-  checkAuth,
-  checkIfBlocked,
-  changeEmail,
+  authenticate,
+  setNewPass,
 );
 
 export default router;

@@ -1,5 +1,4 @@
 import { Schema, model } from "mongoose";
-import { MB } from "../utils/bytes.js";
 
 const userSchema = new Schema(
   {
@@ -30,26 +29,15 @@ const userSchema = new Schema(
     },
     role: {
       type: String,
-      enum: ["Admin", "Manager", "User", "Owner"],
-      default: "User",
+      enum: ["STUDENT", "CREATOR", "ADMIN"],
+      default: "STUDENT",
     },
     isBlocked: {
       type: Boolean,
       default: false,
       required: true,
     },
-    bandwidthUsedBytes: {
-      type: Number,
-      default: 0,
-    },
-    bandwidthCycleStart: {
-      type: Date,
-      default: null,
-    },
-    planId: {
-      type: String,
-      default: "spark_free",
-    },
+    
   },
   {
     strict: "throw",

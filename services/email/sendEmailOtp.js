@@ -1,6 +1,4 @@
 import { Resend } from "resend";
-import crypto from "crypto";
-import OTP from "../../Models/otpModel.js";
 
 const resend = new Resend(process.env.RESEND_KEY);
 
@@ -31,156 +29,69 @@ const buildTemplate = (title, description, otp) => `
   </div>
 `;
 
-const createOtp = () => {
-  const randomBytes = crypto.randomBytes(3);
-  const otp =
-    (randomBytes[0] * 1000000 + randomBytes[1] * 10000 + randomBytes[2] * 100) %
-    1000000;
-  return otp.toString().padStart(6, "0");
-};
+export const sendEmail = async (email, purpose, otp) => {
+  if (!email || typeof email !== "string") {
+    return {
+      success: false,
+      error: "Invalid email address",
+    };
+  }
 
-export const sendEmail = async (email, purpose) => {
-  if (purpose === "auth") {
-    if (!email || typeof email !== "string") {
+  let title, description, subject;
+
+  switch (purpose) {
+    case "REGISTER":
+      title = "Verify Your Registration";
+      description = "Use this OTP to complete your registration:";
+      subject = "Your registration verification code";
+      break;
+    case "CHANGE_PASSWORD":
+      title = "Confirm Password Change";
+      description = "Use this OTP to confirm changing your password:";
+      subject = "Your password change verification code";
+      break;
+    case "FORGOT_PASSWORD":
+      title = "Reset Your Password";
+      description = "Use this OTP to reset your password:";
+      subject = "Your password reset verification code";
+      break;
+    case "SET_PASSWORD":
+      title = "Set Your Password";
+      description = "Use this OTP to set a password for your account:";
+      subject = "Your password verification code";
+      break;
+    default:
       return {
         success: false,
-        error: "Invalid email address",
+        error: "Invalid OTP purpose",
       };
-    }
+  }
 
-    const otp = createOtp();
+  try {
+    const { data, error } = await resend.emails.send({
+      from: "Sasta Drive <otp@upisathi.in>",
+      to: email,
+      subject: subject,
+      html: buildTemplate(title, description, otp),
+    });
 
-    try {
-      const { data, error } = await resend.emails.send({
-        from: "Sasta Drive <otp@upisathi.in>",
-        to: email,
-        subject: "Your login verification code",
-        html: buildTemplate(
-          "Verify Your Login",
-          "Use this OTP to continue:",
-          otp,
-        ),
-      });
-
-      if (error) {
-        console.error("Resend error:", error);
-        return {
-          success: false,
-          error: "Failed to send OTP. Please try again.",
-        };
-      }
-
-      // Save OTP only after successful email send
-      await OTP.findOneAndUpdate(
-        { email, purpose },
-        {
-          email,
-          otp,
-          purpose,
-          expiresAt: new Date(Date.now() + 10 * 60 * 1000),
-          createdAt: new Date(),
-        },
-        { upsert: true },
-      );
-
-      return {
-        success: true,
-        message: `OTP sent to ${email}`,
-      };
-    } catch (error) {
-      console.error("Auth OTP error:", error);
+    if (error) {
+      console.error("Resend error:", error);
       return {
         success: false,
         error: "Failed to send OTP. Please try again.",
       };
     }
+
+    return {
+      success: true,
+      message: `OTP sent to ${email}`,
+    };
+  } catch (error) {
+    console.error("Resend execution error:", error);
+    return {
+      success: false,
+      error: "Failed to send OTP. Please try again.",
+    };
   }
-
-  if (purpose === "security") {
-    if (
-      !email ||
-      typeof email !== "object" ||
-      !email.oldEmail ||
-      !email.newEmail
-    ) {
-      return {
-        success: false,
-        error: "Invalid email parameters",
-      };
-    }
-
-    const { oldEmail, newEmail } = email;
-    const oldEmailOtp = createOtp();
-    const newEmailOtp = createOtp();
-
-    try {
-      const results = await Promise.all([
-        resend.emails.send({
-          from: "Sasta Drive <otp@sastadrive.in>",
-          to: oldEmail,
-          subject: "Confirm your current email",
-          html: buildTemplate(
-            "Confirm Current Email",
-            "Use this OTP to confirm your existing email:",
-            oldEmailOtp,
-          ),
-        }),
-
-        resend.emails.send({
-          from: "Sasta Drive <otp@sastadrive.in>",
-          to: newEmail,
-          subject: "Confirm your new email",
-          html: buildTemplate(
-            "Confirm New Email",
-            "Use this OTP to verify your new email:",
-            newEmailOtp,
-          ),
-        }),
-      ]);
-
-      // Check if any email send failed
-      const emailErrors = results.filter((result) => result.error);
-      if (emailErrors.length > 0) {
-        console.error("Resend errors:", emailErrors);
-        return {
-          success: false,
-          error: "Failed to send OTP to one or both emails. Please try again.",
-        };
-      }
-
-      // Save OTPs only after successful email sends
-      await OTP.findOneAndUpdate(
-        {
-          email: oldEmail,
-          purpose,
-        },
-        {
-          email: oldEmail,
-          newEmail,
-          otp: oldEmailOtp,
-          newEmailOtp,
-          purpose,
-          expiresAt: new Date(Date.now() + 10 * 60 * 1000),
-          createdAt: new Date(),
-        },
-        { upsert: true },
-      );
-
-      return {
-        success: true,
-        message: "OTP sent to both old and new emails",
-      };
-    } catch (error) {
-      console.error("Security OTP error:", error);
-      return {
-        success: false,
-        error: "Failed to send OTP. Please try again.",
-      };
-    }
-  }
-
-  return {
-    success: false,
-    error: "Invalid OTP purpose",
-  };
 };

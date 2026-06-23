@@ -1,8 +1,6 @@
 import express from "express";
-import {
-  adminReadPrivilegesAuth,
-  adminWritePrivilegesAuth,
-} from "../middlewares/authMiddleware.js";
+import { authorize } from "../middlewares/authorize.js";
+import { roles } from "../config/roles.js";
 import {
   adminBlock,
   adminDelete,
@@ -15,40 +13,40 @@ import { customRateLimit } from "../middlewares/rateLimit.js";
 
 const router = express.Router();
 
-router.get("/", customRateLimit(1, 5), adminReadPrivilegesAuth, getAllUsers);
+router.get("/", customRateLimit(1, 5), authorize(roles.CREATOR, roles.ADMIN), getAllUsers);
 
 router.get(
   "/session/:id",
   customRateLimit(1, 20),
-  adminReadPrivilegesAuth,
+  authorize(roles.CREATOR, roles.ADMIN),
   getSessionStatus,
 );
 
 router.post(
   "/logout",
   customRateLimit(1, 1),
-  adminReadPrivilegesAuth,
+  authorize(roles.CREATOR, roles.ADMIN),
   adminLogout,
 );
 
 router.delete(
   "/delete",
   customRateLimit(1, 1),
-  adminWritePrivilegesAuth,
+  authorize(roles.ADMIN),
   adminDelete,
 );
 
 router.patch(
   "/block",
   customRateLimit(1, 5),
-  adminWritePrivilegesAuth,
+  authorize(roles.ADMIN),
   adminBlock,
 );
 
 router.patch(
   "/role",
   customRateLimit(1, 1),
-  adminWritePrivilegesAuth,
+  authorize(roles.ADMIN),
   changeRole,
 );
 

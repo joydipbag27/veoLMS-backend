@@ -22,14 +22,16 @@ const otpSchema = new Schema(
     },
     purpose: {
       type: String,
-      enum: ["auth", "security"],
+      enum: ["REGISTER", "CHANGE_PASSWORD", "FORGOT_PASSWORD", "SET_PASSWORD"],
       required: true,
     },
-    newEmail: {
-      type: String,
+    isVerified: {
+      type: Boolean,
+      default: false,
     },
-    newEmailOtp: {
-      type: String,
+    isEmailRegistered: {
+      type: Boolean,
+      default: false,
     },
   },
   {

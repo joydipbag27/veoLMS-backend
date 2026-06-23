@@ -1,7 +1,7 @@
 import { redisClient } from "../config/redis.js";
 import { sidSchema } from "../validators/authSchema.js";
 
-export const checkAuth = async (req, res, next) => {
+export const authenticate = async (req, res, next) => {
   try {
     const { sid } = req.signedCookies;
 
@@ -27,6 +27,14 @@ export const checkAuth = async (req, res, next) => {
       return res.status(401).json({ error: "Session expired" });
     }
 
+    if (session.isBlocked) {
+      return res.status(403).json({
+        error:
+          "Your account has been banned. Please contact support if you believe this is a mistake",
+        redirect: "/banned",
+      });
+    }
+
     req.user = {
       _id: session.userId,
       rootDirId: session.rootDirId,
@@ -37,37 +45,5 @@ export const checkAuth = async (req, res, next) => {
     next();
   } catch (error) {
     next(error);
-  }
-};
-
-export const checkIfBlocked = async (req, res, next) => {
-  if (!req.user) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-
-  if (req.user.isBlocked) {
-    return res.status(403).json({
-      error:
-        "Your account has been banned. Please contact support if you believe this is a mistake",
-      redirect: "/banned",
-    });
-  }
-
-  next();
-};
-
-export const adminReadPrivilegesAuth = async (req, res, next) => {
-  if (req.user.role !== "User") {
-    next();
-  } else {
-    return res.status(403).json({ error: "You don't have read privileges" });
-  }
-};
-
-export const adminWritePrivilegesAuth = async (req, res, next) => {
-  if (req.user.role === "Admin" || "Owner") {
-    next();
-  } else {
-    return res.status(403).json({ error: "You don't have this permission" });
   }
 };

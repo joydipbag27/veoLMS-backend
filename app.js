@@ -6,7 +6,7 @@ import authRoutes from "./Routes/authRoutes.js";
 import rbacRoutes from "./Routes/rbacRoutes.js";
 import uploadRoutes from "./Routes/uploadRoutes.js";
 import cookieParser from "cookie-parser";
-import { checkAuth, checkIfBlocked } from "./middlewares/authMiddleware.js";
+import { authenticate } from "./middlewares/authenticate.js";
 import helmet from "helmet";
 
 const app = express();
@@ -35,7 +35,7 @@ app.use(
 
 app.use("/user", userRoutes);
 app.use("/auth", authRoutes);
-app.use("/users", checkAuth, checkIfBlocked, rbacRoutes);
+app.use("/users", authenticate, rbacRoutes);
 app.use("/file", uploadRoutes);
 
 app.use((error, req, res, next) => {

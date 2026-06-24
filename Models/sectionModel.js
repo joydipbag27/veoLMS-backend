@@ -32,5 +32,8 @@ const sectionSchema = new mongoose.Schema(
   }
 );
 
+// Prevent duplicate order values within the same course
+sectionSchema.index({ course: 1, order: 1 }, { unique: true });
+
 const Section = mongoose.model("Section", sectionSchema);
 export default Section;

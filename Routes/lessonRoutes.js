@@ -9,7 +9,9 @@ import {
   deleteLesson,
 } from "../Controllers/lessonController.js";
 import { authenticate } from "../middlewares/authenticate.js";
+import { optionalAuthenticate } from "../middlewares/optionalAuthenticate.js";
 import { authorize } from "../middlewares/authorize.js";
+import { checkLessonAccess } from "../middlewares/lessonAccess.js";
 import { roles } from "../config/roles.js";
 import { customRateLimit } from "../middlewares/rateLimit.js";
 
@@ -23,7 +25,7 @@ router.post(
   createLesson,
 );
 
-router.get("/section/:sectionId", getLessonsBySection);
+router.get("/section/:sectionId", optionalAuthenticate, getLessonsBySection);
 
 router.get(
   "/creator/section/:sectionId",
@@ -39,7 +41,7 @@ router.get(
   getMyLessonById,
 );
 
-router.get("/:id", getLessonById);
+router.get("/:id", authenticate, checkLessonAccess, getLessonById);
 
 router.patch(
   "/:id",

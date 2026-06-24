@@ -54,5 +54,8 @@ const lessonSchema = new mongoose.Schema(
   }
 );
 
+// Prevent duplicate order values within the same section
+lessonSchema.index({ section: 1, order: 1 }, { unique: true });
+
 const Lesson = mongoose.model("Lesson", lessonSchema);
 export default Lesson;

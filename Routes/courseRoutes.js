@@ -6,7 +6,9 @@ import {
   getCourseById,
   updateCourse,
   deleteCourse,
+  getCourseDetails,
 } from "../Controllers/courseController.js";
+import { enrollInCourse, getMyEnrollments, getEnrollmentByCourseId } from "../Controllers/enrollmentController.js";
 import { authenticate } from "../middlewares/authenticate.js";
 import { authorize } from "../middlewares/authorize.js";
 import { roles } from "../config/roles.js";
@@ -31,8 +33,30 @@ router.get(
   getMyCourses,
 );
 
+
+
+router.get(
+  "/enrollments/me",
+  authenticate,
+  getMyEnrollments,
+);
+
 router.get("/:id", getCourseById);
 
+router.get("/:id/details", getCourseDetails);
+
+router.get(
+  "/:id/enrollment",
+  authenticate,
+  getEnrollmentByCourseId,
+);
+
+router.post(
+  "/:id/enroll",
+  customRateLimit(1, 10),
+  authenticate,
+  enrollInCourse,
+);
 
 router.patch(
   "/:id",

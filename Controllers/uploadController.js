@@ -1,14 +1,13 @@
 import { PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { s3Client } from "../config/s3Client.js";
+import { successResponse, errorResponse } from "../utils/response.js";
 
-export const getUploadUrl = async (req, res, next) => {
+// GET PRE-SIGNED UPLOAD URL
+export const getUploadUrl = async (req, res) => {
   const { fileName, contentType } = req.body;
-
   if (!fileName || !contentType) {
-    return res
-      .status(400)
-      .json({ error: "fileName and contentType are required" });
+    return errorResponse(res, 400, "fileName and contentType are required");
   }
 
   try {
@@ -18,23 +17,18 @@ export const getUploadUrl = async (req, res, next) => {
       ContentType: contentType,
     });
 
-    const url = await getSignedUrl(s3Client, command, {
-      expiresIn: 3600, // 1 hour
-    });
-
-    return res.status(200).json({ uploadUrl: url, key: fileName });
-  } catch (error) {
-    console.error("Error generating presigned PUT URL", error);
-    next(error);
+    const url = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+    return successResponse(res, 200, "Upload URL generated", { uploadUrl: url, key: fileName });
+  } catch (err) {
+    console.error("[getUploadUrl] Failed to generate presigned PUT URL:", err);
+    return errorResponse(res, 500, "Failed to generate upload URL");
   }
 };
 
-export const getDownloadUrl = async (req, res, next) => {
+// GET PRE-SIGNED DOWNLOAD URL
+export const getDownloadUrl = async (req, res) => {
   const { key } = req.params;
-
-  if (!key) {
-    return res.status(400).json({ error: "File key is required" });
-  }
+  if (!key) return errorResponse(res, 400, "File key is required");
 
   try {
     const command = new GetObjectCommand({
@@ -42,13 +36,10 @@ export const getDownloadUrl = async (req, res, next) => {
       Key: key,
     });
 
-    const url = await getSignedUrl(s3Client, command, {
-      expiresIn: 3600, // 1 hour
-    });
-
-    return res.status(200).json({ downloadUrl: url });
-  } catch (error) {
-    console.error("Error generating presigned GET URL", error);
-    next(error);
+    const url = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+    return successResponse(res, 200, "Download URL generated", { downloadUrl: url });
+  } catch (err) {
+    console.error("[getDownloadUrl] Failed to generate presigned GET URL:", err);
+    return errorResponse(res, 500, "Failed to generate download URL");
   }
 };

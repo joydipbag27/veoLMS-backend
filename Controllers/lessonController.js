@@ -1,197 +1,188 @@
 import Lesson from "../Models/lessonModel.js";
 import Section from "../Models/sectionModel.js";
 import Course from "../Models/courseModel.js";
+import Enrollment from "../Models/enrollmentModel.js";
 import { createLessonSchema, updateLessonSchema } from "../validators/lessonSchema.js";
+import { successResponse, errorResponse } from "../utils/response.js";
 
 // CREATE LESSON
-export const createLesson = async (req, res, next) => {
+export const createLesson = async (req, res) => {
   const { success, data, error } = createLessonSchema.safeParse(req.body);
-
-  if (!success) {
-    return res.status(400).json({ error: error.issues[0].message });
-  }
+  if (!success) return errorResponse(res, 400, error.issues[0].message);
 
   const { title, description, course, section, video, duration, isPreview, order } = data;
 
   try {
     const courseExists = await Course.findById(course);
-    if (!courseExists) {
-      return res.status(404).json({ error: "Course not found" });
-    }
+    if (!courseExists) return errorResponse(res, 404, "Course not found");
 
     const sectionExists = await Section.findById(section);
-    if (!sectionExists) {
-      return res.status(404).json({ error: "Section not found" });
-    }
+    if (!sectionExists) return errorResponse(res, 404, "Section not found");
 
-    // Verify section belongs to the specified course
     if (sectionExists.course.toString() !== course) {
-      return res.status(400).json({ error: "Section does not belong to the specified course" });
+      return errorResponse(res, 400, "Section does not belong to the specified course");
     }
 
-    // Check if user is either ADMIN or the creator of the course
     if (req.user.role !== "ADMIN" && courseExists.creator.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ error: "You do not have permission to modify this course" });
+      return errorResponse(res, 403, "You do not have permission to modify this course");
     }
 
-    const newLesson = await Lesson.create({
-      title,
-      description,
-      course,
-      section,
-      video,
-      duration,
-      isPreview,
-      order,
-    });
+    const orderConflict = await Lesson.findOne({ section, order });
+    if (orderConflict) return errorResponse(res, 409, `A lesson with order ${order} already exists in this section`);
 
-    return res.status(201).json({
-      message: "Lesson created successfully",
-      lesson: newLesson,
-    });
+    const newLesson = await Lesson.create({ title, description, course, section, video, duration, isPreview, order });
+    return successResponse(res, 201, "Lesson created successfully", { lesson: newLesson });
   } catch (err) {
-    next(err);
+    console.error("[createLesson] Unexpected error:", err);
+    return errorResponse(res, 500, "Failed to create lesson");
   }
 };
 
-// GET LESSONS BY SECTION
-export const getLessonsBySection = async (req, res, next) => {
+// GET LESSONS BY SECTION (access-controlled)
+export const getLessonsBySection = async (req, res) => {
   try {
     const { sectionId } = req.params;
-    const lessons = await Lesson.find({ section: sectionId }).sort({ order: 1 });
-    return res.status(200).json({ lessons });
+
+    const section = await Section.findById(sectionId);
+    if (!section) return errorResponse(res, 404, "Section not found");
+
+    const allLessons = await Lesson.find({ section: sectionId }).sort({ order: 1 }).lean();
+    const user = req.user;
+
+    // Admin: full access
+    if (user && user.role === "ADMIN") {
+      return successResponse(res, 200, "Lessons fetched", { lessons: allLessons });
+    }
+
+    // Creator of this course: full access
+    const course = await Course.findById(section.course);
+    if (user && course && course.creator.toString() === user._id.toString()) {
+      return successResponse(res, 200, "Lessons fetched", { lessons: allLessons });
+    }
+
+    // Enrolled student: full access
+    if (user) {
+      const enrollment = await Enrollment.findOne({ user: user._id, course: section.course, status: "Active" });
+      if (enrollment) {
+        return successResponse(res, 200, "Lessons fetched", { lessons: allLessons });
+      }
+    }
+
+    // Not enrolled or unauthenticated: only preview lessons, no video field
+    const previewLessons = allLessons
+      .filter((l) => l.isPreview)
+      .map(({ video, ...rest }) => rest);
+
+    return successResponse(res, 200, "Lessons fetched", { lessons: previewLessons });
   } catch (err) {
-    next(err);
+    console.error("[getLessonsBySection] Unexpected error:", err);
+    return errorResponse(res, 500, "Failed to fetch lessons");
   }
 };
 
 // GET LESSON BY ID
-export const getLessonById = async (req, res, next) => {
+export const getLessonById = async (req, res) => {
   try {
-    const { id } = req.params;
-    const lesson = await Lesson.findById(id);
-    if (!lesson) {
-      return res.status(404).json({ error: "Lesson not found" });
-    }
-    return res.status(200).json({ lesson });
+    // req.lesson is pre-fetched and access-validated by checkLessonAccess middleware
+    return successResponse(res, 200, "Lesson fetched", { lesson: req.lesson });
   } catch (err) {
-    next(err);
+    console.error("[getLessonById] Unexpected error:", err);
+    return errorResponse(res, 500, "Failed to fetch lesson");
   }
 };
 
 // UPDATE LESSON
-export const updateLesson = async (req, res, next) => {
+export const updateLesson = async (req, res) => {
   try {
     const { id } = req.params;
     const { success, data, error } = updateLessonSchema.safeParse(req.body);
-    if (!success) {
-      return res.status(400).json({ error: error.issues[0].message });
-    }
+    if (!success) return errorResponse(res, 400, error.issues[0].message);
 
     const lesson = await Lesson.findById(id);
-    if (!lesson) {
-      return res.status(404).json({ error: "Lesson not found" });
-    }
+    if (!lesson) return errorResponse(res, 404, "Lesson not found");
 
     const course = await Course.findById(lesson.course);
-    if (!course) {
-      return res.status(404).json({ error: "Associated course not found" });
+    if (!course) return errorResponse(res, 404, "Associated course not found");
+
+    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
+      return errorResponse(res, 403, "You do not have permission to modify this lesson");
     }
 
-    // Check if user is either ADMIN or the creator of the course
-    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ error: "You do not have permission to modify this lesson" });
+    if (data.order !== undefined && data.order !== lesson.order) {
+      const orderConflict = await Lesson.findOne({ section: lesson.section, order: data.order });
+      if (orderConflict) return errorResponse(res, 409, `A lesson with order ${data.order} already exists in this section`);
     }
 
     Object.assign(lesson, data);
     const updatedLesson = await lesson.save();
-
-    return res.status(200).json({
-      message: "Lesson updated successfully",
-      lesson: updatedLesson,
-    });
+    return successResponse(res, 200, "Lesson updated successfully", { lesson: updatedLesson });
   } catch (err) {
-    next(err);
+    console.error("[updateLesson] Unexpected error:", err);
+    return errorResponse(res, 500, "Failed to update lesson");
   }
 };
 
 // DELETE LESSON
-export const deleteLesson = async (req, res, next) => {
+export const deleteLesson = async (req, res) => {
   try {
     const { id } = req.params;
     const lesson = await Lesson.findById(id);
-    if (!lesson) {
-      return res.status(404).json({ error: "Lesson not found" });
-    }
+    if (!lesson) return errorResponse(res, 404, "Lesson not found");
 
     const course = await Course.findById(lesson.course);
-    if (!course) {
-      return res.status(404).json({ error: "Associated course not found" });
-    }
+    if (!course) return errorResponse(res, 404, "Associated course not found");
 
-    // Check if user is either ADMIN or the creator of the course
     if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ error: "You do not have permission to delete this lesson" });
+      return errorResponse(res, 403, "You do not have permission to delete this lesson");
     }
 
     await lesson.deleteOne();
-
-    return res.status(200).json({
-      message: "Lesson deleted successfully",
-    });
+    return successResponse(res, 200, "Lesson deleted successfully");
   } catch (err) {
-    next(err);
+    console.error("[deleteLesson] Unexpected error:", err);
+    return errorResponse(res, 500, "Failed to delete lesson");
   }
 };
 
 // GET CREATOR'S OWN LESSONS BY SECTION
-export const getMyLessonsBySection = async (req, res, next) => {
+export const getMyLessonsBySection = async (req, res) => {
   try {
     const { sectionId } = req.params;
     const section = await Section.findById(sectionId);
-    if (!section) {
-      return res.status(404).json({ error: "Section not found" });
-    }
+    if (!section) return errorResponse(res, 404, "Section not found");
 
     const course = await Course.findById(section.course);
-    if (!course) {
-      return res.status(404).json({ error: "Associated course not found" });
-    }
+    if (!course) return errorResponse(res, 404, "Associated course not found");
 
-    // Check if user is creator of the course or ADMIN
     if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ error: "You do not have permission to view lessons for this section" });
+      return errorResponse(res, 403, "You do not have permission to view lessons for this section");
     }
 
     const lessons = await Lesson.find({ section: sectionId }).sort({ order: 1 });
-    return res.status(200).json({ lessons });
+    return successResponse(res, 200, "Lessons fetched", { lessons });
   } catch (err) {
-    next(err);
+    console.error("[getMyLessonsBySection] Unexpected error:", err);
+    return errorResponse(res, 500, "Failed to fetch lessons");
   }
 };
 
 // GET CREATOR'S OWN LESSON BY ID
-export const getMyLessonById = async (req, res, next) => {
+export const getMyLessonById = async (req, res) => {
   try {
     const { id } = req.params;
     const lesson = await Lesson.findById(id);
-    if (!lesson) {
-      return res.status(404).json({ error: "Lesson not found" });
-    }
+    if (!lesson) return errorResponse(res, 404, "Lesson not found");
 
     const course = await Course.findById(lesson.course);
-    if (!course) {
-      return res.status(404).json({ error: "Associated course not found" });
-    }
+    if (!course) return errorResponse(res, 404, "Associated course not found");
 
-    // Check if user is creator of the course or ADMIN
     if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ error: "You do not have permission to view this lesson" });
+      return errorResponse(res, 403, "You do not have permission to view this lesson");
     }
 
-    return res.status(200).json({ lesson });
+    return successResponse(res, 200, "Lesson fetched", { lesson });
   } catch (err) {
-    next(err);
+    console.error("[getMyLessonById] Unexpected error:", err);
+    return errorResponse(res, 500, "Failed to fetch lesson");
   }
 };
-

@@ -2,40 +2,31 @@ import Course from "../Models/courseModel.js";
 import Section from "../Models/sectionModel.js";
 import Lesson from "../Models/lessonModel.js";
 import { createCourseSchema, updateCourseSchema } from "../validators/courseSchema.js";
+import { successResponse, errorResponse } from "../utils/response.js";
 
 // CREATE COURSE
-export const createCourse = async (req, res, next) => {
+export const createCourse = async (req, res) => {
   const { success, data, error } = createCourseSchema.safeParse(req.body);
-
-  if (!success) {
-    return res.status(400).json({ error: error.issues[0].message });
-  }
+  if (!success) return errorResponse(res, 400, error.issues[0].message);
 
   const { title, description, thumbnail, price, category, level, status } = data;
 
   try {
     const newCourse = await Course.create({
-      title,
-      description,
-      thumbnail,
+      title, description, thumbnail,
       creator: req.user._id,
-      price,
-      category,
-      level,
-      status,
+      price, category, level, status,
     });
 
-    return res.status(201).json({
-      message: "Course created successfully",
-      course: newCourse,
-    });
+    return successResponse(res, 201, "Course created successfully", { course: newCourse });
   } catch (err) {
-    next(err);
+    console.error("[createCourse] Unexpected error:", err);
+    return errorResponse(res, 500, "Failed to create course");
   }
 };
 
-// GET ALL COURSES (with pagination)
-export const getCourses = async (req, res, next) => {
+// GET ALL COURSES (paginated)
+export const getCourses = async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit) || 10, 50);
     const cursor = req.query.cursor;
@@ -46,135 +37,130 @@ export const getCourses = async (req, res, next) => {
     const query = { status };
     if (category) query.category = category;
     if (level) query.level = level;
+    if (cursor) query._id = { $lt: cursor };
 
-    if (cursor) {
-      query._id = { $lt: cursor };
-    }
-
-    const courses = await Course.find(query)
-      .sort({ _id: -1 })
-      .limit(limit + 1);
-
+    const courses = await Course.find(query).sort({ _id: -1 }).limit(limit + 1);
     const hasNextPage = courses.length > limit;
     const data = hasNextPage ? courses.slice(0, limit) : courses;
     const nextCursor = hasNextPage ? data[data.length - 1]._id : null;
 
-    return res.status(200).json({
-      courses: data,
-      nextCursor,
-      hasNextPage,
-    });
+    return successResponse(res, 200, "Courses fetched", { courses: data, nextCursor, hasNextPage });
   } catch (err) {
-    next(err);
+    console.error("[getCourses] Unexpected error:", err);
+    return errorResponse(res, 500, "Failed to fetch courses");
   }
 };
 
 // GET CREATOR'S OWN COURSES
-export const getMyCourses = async (req, res, next) => {
+export const getMyCourses = async (req, res) => {
   try {
     const creatorId = req.user._id;
     const limit = Math.min(parseInt(req.query.limit) || 20, 50);
     const cursor = req.query.cursor;
 
     const query = { creator: creatorId };
-
-    if (req.query.status) {
+    if (req.query.status && req.query.status !== "All") {
       query.status = req.query.status;
     }
+    if (cursor) query._id = { $lt: cursor };
 
-    if (cursor) {
-      query._id = { $lt: cursor };
-    }
-
-    const courses = await Course.find(query)
-      .sort({ _id: -1 })
-      .limit(limit + 1);
-
+    const courses = await Course.find(query).sort({ _id: -1 }).limit(limit + 1);
     const hasNextPage = courses.length > limit;
     const data = hasNextPage ? courses.slice(0, limit) : courses;
     const nextCursor = hasNextPage ? data[data.length - 1]._id : null;
 
-    return res.status(200).json({
-      courses: data,
-      nextCursor,
-      hasNextPage,
-    });
+    return successResponse(res, 200, "Courses fetched", { courses: data, nextCursor, hasNextPage });
   } catch (err) {
-    next(err);
+    console.error("[getMyCourses] Unexpected error:", err);
+    return errorResponse(res, 500, "Failed to fetch courses");
   }
 };
 
-
 // GET COURSE BY ID
-export const getCourseById = async (req, res, next) => {
+export const getCourseById = async (req, res) => {
   try {
     const { id } = req.params;
     const course = await Course.findById(id).populate("creator", "username email");
-    if (!course) {
-      return res.status(404).json({ error: "Course not found" });
-    }
-    return res.status(200).json({ course });
+    if (!course) return errorResponse(res, 404, "Course not found");
+    return successResponse(res, 200, "Course fetched", { course });
   } catch (err) {
-    next(err);
+    console.error("[getCourseById] Unexpected error:", err);
+    return errorResponse(res, 500, "Failed to fetch course");
+  }
+};
+
+// GET COURSE DETAILS (course + sections + lessons structured)
+export const getCourseDetails = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const course = await Course.findById(id).populate("creator", "username email");
+    if (!course) return errorResponse(res, 404, "Course not found");
+
+    const sections = await Section.find({ course: id }).sort({ order: 1 }).lean();
+    const lessons = await Lesson.find({ course: id }).sort({ order: 1 }).lean();
+
+    const lessonsBySection = {};
+    for (const lesson of lessons) {
+      const { video, ...safeLesson } = lesson;
+      const secId = safeLesson.section.toString();
+      if (!lessonsBySection[secId]) lessonsBySection[secId] = [];
+      lessonsBySection[secId].push(safeLesson);
+    }
+
+    const formattedSections = sections.map((sec) => ({
+      section: sec,
+      lessons: lessonsBySection[sec._id.toString()] || [],
+    }));
+
+    return successResponse(res, 200, "Course details fetched", { course, sections: formattedSections });
+  } catch (err) {
+    console.error("[getCourseDetails] Unexpected error:", err);
+    return errorResponse(res, 500, "Failed to fetch course details");
   }
 };
 
 // UPDATE COURSE
-export const updateCourse = async (req, res, next) => {
+export const updateCourse = async (req, res) => {
   try {
     const { id } = req.params;
     const { success, data, error } = updateCourseSchema.safeParse(req.body);
-    if (!success) {
-      return res.status(400).json({ error: error.issues[0].message });
-    }
+    if (!success) return errorResponse(res, 400, error.issues[0].message);
 
     const course = await Course.findById(id);
-    if (!course) {
-      return res.status(404).json({ error: "Course not found" });
-    }
+    if (!course) return errorResponse(res, 404, "Course not found");
 
-    // Check permissions: requesting user must be creator or ADMIN
     if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ error: "You do not have permission to update this course" });
+      return errorResponse(res, 403, "You do not have permission to update this course");
     }
 
     Object.assign(course, data);
     const updatedCourse = await course.save();
-
-    return res.status(200).json({
-      message: "Course updated successfully",
-      course: updatedCourse,
-    });
+    return successResponse(res, 200, "Course updated successfully", { course: updatedCourse });
   } catch (err) {
-    next(err);
+    console.error("[updateCourse] Unexpected error:", err);
+    return errorResponse(res, 500, "Failed to update course");
   }
 };
 
-// DELETE COURSE (Cascading delete)
-export const deleteCourse = async (req, res, next) => {
+// DELETE COURSE (cascading)
+export const deleteCourse = async (req, res) => {
   try {
     const { id } = req.params;
     const course = await Course.findById(id);
-    if (!course) {
-      return res.status(404).json({ error: "Course not found" });
-    }
+    if (!course) return errorResponse(res, 404, "Course not found");
 
-    // Check permissions: requesting user must be creator or ADMIN
     if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ error: "You do not have permission to delete this course" });
+      return errorResponse(res, 403, "You do not have permission to delete this course");
     }
 
-    // Delete all lessons of this course
     await Lesson.deleteMany({ course: id });
-    // Delete all sections of this course
     await Section.deleteMany({ course: id });
-    // Delete course
     await course.deleteOne();
 
-    return res.status(200).json({
-      message: "Course and all associated sections and lessons deleted successfully",
-    });
+    return successResponse(res, 200, "Course and all associated data deleted successfully");
   } catch (err) {
-    next(err);
+    console.error("[deleteCourse] Unexpected error:", err);
+    return errorResponse(res, 500, "Failed to delete course");
   }
 };

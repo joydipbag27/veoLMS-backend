@@ -4,7 +4,6 @@ import cors from "cors";
 import userRoutes from "./Routes/userRoutes.js";
 import authRoutes from "./Routes/authRoutes.js";
 import rbacRoutes from "./Routes/rbacRoutes.js";
-import uploadRoutes from "./Routes/uploadRoutes.js";
 import courseRoutes from "./Routes/courseRoutes.js";
 import sectionRoutes from "./Routes/sectionRoutes.js";
 import lessonRoutes from "./Routes/lessonRoutes.js";
@@ -40,7 +39,6 @@ app.use(
 app.use("/user", userRoutes);
 app.use("/auth", authRoutes);
 app.use("/users", authenticate, rbacRoutes);
-app.use("/file", uploadRoutes);
 app.use("/course", courseRoutes);
 app.use("/section", sectionRoutes);
 app.use("/lesson", lessonRoutes);

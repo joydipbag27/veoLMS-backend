@@ -14,9 +14,8 @@ const courseSchema = new mongoose.Schema(
       trim: true,
     },
 
-    thumbnail: {
+    thumbnailUrl: {
       type: String,
-      default: "",
     },
 
     creator: {

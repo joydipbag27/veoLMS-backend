@@ -106,9 +106,8 @@ export const deleteSection = async (req, res) => {
     const lessons = await Lesson.find({ section: id }).select("video").lean();
     const mediaIds = lessons.map((l) => l.video).filter(Boolean);
     if (mediaIds.length > 0) {
-      const mediaRecords = await Media.find({ _id: { $in: mediaIds } }).lean();
-      const storageKeys = mediaRecords.map((m) => m.storageKey);
-      if (storageKeys.length > 0) await permanentlyDeleteMultipleFromB2(storageKeys);
+      const keys = mediaIds.map((id) => id.toString());
+      await permanentlyDeleteMultipleFromB2(keys);
       await Media.deleteMany({ _id: { $in: mediaIds } });
     }
 

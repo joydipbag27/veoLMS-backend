@@ -55,9 +55,12 @@ Three roles are defined in `config/roles.js`:
 #### Courses
 - Full CRUD for courses.
 - Courses have a `status` of `Draft` or `Published`.
+- **Dedicated publish/unpublish endpoints** (`PATCH /course/:id/publish` and `PATCH /course/:id/unpublish`) separate status management from general course updates.
+- **Publishing validations**: A course can only be published if it has ≥1 section, every section has ≥1 lesson, and every lesson has a video attached.
+- The general update endpoint (`PATCH /course/:id`) cannot change `status` — it is excluded from the update schema.
 - `GET /course/creator/me` supports `?status=Draft`, `?status=Published`, or `?status=All` to fetch all in a single call.
 - All list endpoints support cursor-based pagination (`?cursor=<id>&limit=<n>`).
-- Cascading delete: deleting a course also deletes all its sections and lessons.
+- Cascading delete: deleting a course also deletes all its sections, lessons, and associated media from B2.
 
 #### Sections
 - Scoped to a course. Ordered by `order` field.
@@ -104,16 +107,19 @@ This logic applies to:
 - `GET /lesson/section/:sectionId` — inline access control in the controller, using `optionalAuthenticate` to handle both logged-in and logged-out users gracefully.
 
 ### 🖼️ Media Management
-- **Media** is a standalone, reusable module that tracks uploaded-file metadata. It has no knowledge of lessons, courses, or sections — business models reference Media documents.
-- **Upload flow**: Backend generates a presigned PUT URL + unique `storageKey`. The frontend uploads directly to Backblaze B2. After success, the frontend calls `confirm-upload` to confirm the upload.
-- **Robust Verification**: When confirming, the backend queries B2/S3 using `HeadObjectCommand` to verify the file exists on the storage server and that its actual size matches the claimed size. If verification fails, the B2 object is cleaned up, database creation is aborted, and a `400` error is returned.
-- **Download flow**: Backend generates a presigned GET URL on-the-fly from the stored `storageKey`. The URL is never persisted in MongoDB.
+- **Media** is a standalone, reusable module that tracks uploaded-file metadata. It has no knowledge of lessons, courses, or sections — business models (Lesson) reference Media documents.
+- **B2 key = `_id`**: Each Media document's `_id` (converted to string via `.toString()`) is used directly as the B2 object key. There is no separate `storageKey` field.
+- **Upload flow**: Lesson-scoped. `POST /media/lesson/:lessonId/upload-url` creates a draft Media document and returns a presigned PUT URL. The frontend uploads directly to B2. After success, the frontend calls `POST /media/lesson/:lessonId/confirm` to verify and finalize.
+- **Replace flow**: `POST /media/lesson/:lessonId/replace-url` deletes the existing video from B2, creates a new Media document, and returns a fresh presigned PUT URL.
+- **Robust Verification**: When confirming, the backend queries B2/S3 using `HeadObjectCommand` to verify the file exists on the storage server and that its actual size matches the claimed size. If verification fails, the B2 object is cleaned up, the Media document is deleted, and a `400` error is returned.
+- **Download flow**: Backend generates a presigned GET URL on-the-fly from `media._id.toString()`. The URL is never persisted in MongoDB.
 - **Deletion**: Only the original uploader or an ADMIN may delete. Deletes the object from B2 (including all versions/markers) and removes the Media document.
 
 ### 📦 File Storage (Backblaze B2)
 - Generate **pre-signed upload URLs** so clients upload directly to B2, not through the server.
 - Generate **pre-signed download URLs** for secure, time-limited file access.
 - Permanent deletion utility (`permanentlyDeleteMultipleFromB2`) handles versioned objects and delete markers.
+- **Important**: All B2 keys passed to the delete utility must be **strings** (e.g., `_id.toString()`), not ObjectId objects.
 
 ---
 
@@ -185,13 +191,13 @@ This logic applies to:
 ### `Media`
 | Field | Type | Notes |
 |---|---|---|
+| `_id` | ObjectId | Auto-generated. Also used as the B2 object key (via `.toString()`) |
 | `uploadedBy` | ObjectId → User | Required, indexed |
-| `storageKey` | String | Required, unique |
 | `mimeType` | String | Required |
 | `size` | Number | Bytes, required |
 | `status` | String | `UPLOADING` \| `READY` \| `FAILED`, default `UPLOADING` |
 
-> Media is a standalone entity. It does **not** store `lessonId`, `courseId`, or `sectionId`. Business models (Course, Lesson) reference Media documents.
+> Media is a standalone entity. It does **not** store `lessonId`, `courseId`, or `sectionId`. Business models (Lesson) reference Media documents. The `_id` serves double duty as the B2 storage key.
 
 ### `OTP`
 Stores short-lived OTPs for email verification and password resets (TTL-managed).
@@ -260,16 +266,7 @@ Stores short-lived OTPs for email verification and password resets (TTL-managed)
 | `PATCH` | `/users/block` | 🔑👑 | 5/min | Block or unblock a user |
 | `PATCH` | `/users/role` | 🔑👑 | 1/min | Change a user's role |
 
----
 
-### File Routes — `/file`
-
-| Method | Path | Auth | Rate Limit | Description |
-|---|---|---|---|---|
-| `POST` | `/file/upload-url` | 🔑 | 15/min | Get a pre-signed URL to upload a file to B2 |
-| `GET` | `/file/download-url/:key` | 🔑 | 30/min | Get a pre-signed URL to download a file from B2 |
-
----
 
 ### Course Routes — `/course`
 
@@ -279,12 +276,14 @@ Stores short-lived OTPs for email verification and password resets (TTL-managed)
 | `GET` | `/course/` | 🔓 | — | List published courses (paginated, filterable by `category`, `level`, `status`) |
 | `GET` | `/course/creator/me` | 🔑🛡️ | — | List creator's own courses. Supports `?status=Draft\|Published\|All` |
 | `GET` | `/course/:id` | 🔓 | — | Get a single course by ID |
-| `GET` | `/course/:id/details` | 🔓 | — | Get full structured course details: course + sections + lessons (video field stripped) |
+| `GET` | `/course/:id/details` | 👁️ | — | Get full structured course details: course + sections + lessons (video field stripped for non-creators) |
 | `POST` | `/course/:id/enroll` | 🔑 | 10/min | Enroll the current user in a published course |
 | `GET` | `/course/enrollments/me` | 🔑 | — | Get all enrollments of the current logged-in user |
 | `GET` | `/course/:id/enrollment` | 🔑 | — | Get a single enrollment of the current user using course ID |
-| `PATCH` | `/course/:id` | 🔑🛡️ | 10/min | Update a course (creator or admin only) |
-| `DELETE` | `/course/:id` | 🔑🛡️ | 5/min | Delete a course and all its sections and lessons (creator or admin only) |
+| `PATCH` | `/course/:id/publish` | 🔑🛡️ | 10/min | Publish a course. Validates: ≥1 section, each section has ≥1 lesson, each lesson has a video |
+| `PATCH` | `/course/:id/unpublish` | 🔑🛡️ | 10/min | Unpublish a course (set status back to Draft) |
+| `PATCH` | `/course/:id` | 🔑🛡️ | 10/min | Update course metadata (cannot change status — use publish/unpublish endpoints) |
+| `DELETE` | `/course/:id` | 🔑🛡️ | 5/min | Delete a course and all its sections, lessons, and media (creator or admin only) |
 
 
 ---
@@ -321,8 +320,9 @@ Stores short-lived OTPs for email verification and password resets (TTL-managed)
 
 | Method | Path | Auth | Rate Limit | Description |
 |---|---|---|---|---|
-| `POST` | `/media/upload-url` | 🔑 | 15/min | Generate a presigned PUT URL + unique `storageKey` for direct B2 upload |
-| `POST` | `/media/confirm-upload` | 🔑 | 15/min | Create a Media document after successful upload (`status: READY`) |
+| `POST` | `/media/lesson/:lessonId/upload-url` | 🔑🛡️ | 15/min | Create a draft Media document and generate a presigned PUT URL for direct B2 upload |
+| `POST` | `/media/lesson/:lessonId/replace-url` | 🔑🛡️ | 15/min | Delete existing video, create new Media document, and generate a presigned PUT URL |
+| `POST` | `/media/lesson/:lessonId/confirm` | 🔑🛡️ | 15/min | Verify upload on B2 (HeadObject + size check), finalize Media document, and associate with lesson |
 | `GET` | `/media/:id/download` | 🔑 | 30/min | Generate a presigned GET URL for a media file |
 | `DELETE` | `/media/:id` | 🔑 | 10/min | Delete media from B2 + MongoDB (uploader or ADMIN only) |
 

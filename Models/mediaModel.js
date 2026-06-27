@@ -9,11 +9,6 @@ const mediaSchema = new mongoose.Schema(
       index: true,
     },
 
-    storageKey: {
-      type: String,
-      required: true,
-      unique: true,
-    },
 
     mimeType: {
       type: String,

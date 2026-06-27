@@ -10,10 +10,9 @@ export const createCourseSchema = z.object({
     .string()
     .trim()
     .min(10, "Description must be at least 10 characters"),
-  thumbnail: z
+  thumbnailUrl: z
     .string()
-    .trim()
-    .url("Thumbnail must be a valid URL")
+    .url("Invalid thumbnail URL")
     .optional()
     .or(z.literal("")),
   price: z.coerce
@@ -25,5 +24,5 @@ export const createCourseSchema = z.object({
   status: z.enum(["Draft", "Published"]).default("Draft"),
 });
 
-export const updateCourseSchema = createCourseSchema.partial();
+export const updateCourseSchema = createCourseSchema.omit({ status: true }).partial();
 

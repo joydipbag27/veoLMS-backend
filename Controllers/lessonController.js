@@ -12,7 +12,7 @@ export const createLesson = async (req, res) => {
   const { success, data, error } = createLessonSchema.safeParse(req.body);
   if (!success) return errorResponse(res, 400, error.issues[0].message);
 
-  const { title, description, course, section, video, duration, isPreview, order } = data;
+  const { title, description, course, section, duration, isPreview, order, video } = data;
 
   try {
     const courseExists = await Course.findById(course);
@@ -38,7 +38,7 @@ export const createLesson = async (req, res) => {
     const orderConflict = await Lesson.findOne({ section, order });
     if (orderConflict) return errorResponse(res, 409, `A lesson with order ${order} already exists in this section`);
 
-    const newLesson = await Lesson.create({ title, description, course, section, video, duration, isPreview, order });
+    const newLesson = await Lesson.create({ title, description, course, section, duration, isPreview, order, video });
     return successResponse(res, 201, "Lesson created successfully", { lesson: newLesson });
   } catch (err) {
     console.error("[createLesson] Unexpected error:", err);
@@ -116,12 +116,6 @@ export const updateLesson = async (req, res) => {
       return errorResponse(res, 403, "You do not have permission to modify this lesson");
     }
 
-    if (data.video) {
-      const media = await Media.findById(data.video);
-      if (!media) return errorResponse(res, 404, "Media not found");
-      if (media.status !== "READY") return errorResponse(res, 400, "Media is not ready");
-    }
-
     if (data.order !== undefined && data.order !== lesson.order) {
       const orderConflict = await Lesson.findOne({ section: lesson.section, order: data.order });
       if (orderConflict) return errorResponse(res, 409, `A lesson with order ${data.order} already exists in this section`);
@@ -154,7 +148,7 @@ export const deleteLesson = async (req, res) => {
     if (lesson.video) {
       const media = await Media.findById(lesson.video);
       if (media) {
-        await permanentlyDeleteMultipleFromB2([media.storageKey]);
+        await permanentlyDeleteMultipleFromB2([media._id.toString()]);
         await media.deleteOne();
       }
     }

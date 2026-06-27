@@ -1,27 +1,40 @@
 import express from "express";
 import {
-  getMediaUploadUrl,
-  confirmMediaUpload,
+  getLessonVideoUploadUrl,
+  getLessonVideoReplaceUrl,
+  confirmLessonVideoUpload,
   getMediaDownloadUrl,
   deleteMedia,
 } from "../Controllers/mediaController.js";
 import { authenticate } from "../middlewares/authenticate.js";
+import { authorize } from "../middlewares/authorize.js";
+import { roles } from "../config/roles.js";
 import { customRateLimit } from "../middlewares/rateLimit.js";
 
 const router = express.Router();
 
 router.post(
-  "/upload-url",
+  "/lesson/:lessonId/upload-url",
   customRateLimit(1, 15),
   authenticate,
-  getMediaUploadUrl,
+  authorize(roles.CREATOR, roles.ADMIN),
+  getLessonVideoUploadUrl,
 );
 
 router.post(
-  "/confirm-upload",
+  "/lesson/:lessonId/replace-url",
   customRateLimit(1, 15),
   authenticate,
-  confirmMediaUpload,
+  authorize(roles.CREATOR, roles.ADMIN),
+  getLessonVideoReplaceUrl,
+);
+
+router.post(
+  "/lesson/:lessonId/confirm",
+  customRateLimit(1, 15),
+  authenticate,
+  authorize(roles.CREATOR, roles.ADMIN),
+  confirmLessonVideoUpload,
 );
 
 router.get(

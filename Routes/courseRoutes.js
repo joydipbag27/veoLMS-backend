@@ -5,11 +5,14 @@ import {
   getMyCourses,
   getCourseById,
   updateCourse,
+  publishCourse,
+  unpublishCourse,
   deleteCourse,
   getCourseDetails,
 } from "../Controllers/courseController.js";
 import { enrollInCourse, getMyEnrollments, getEnrollmentByCourseId } from "../Controllers/enrollmentController.js";
 import { authenticate } from "../middlewares/authenticate.js";
+import { optionalAuthenticate } from "../middlewares/optionalAuthenticate.js";
 import { authorize } from "../middlewares/authorize.js";
 import { roles } from "../config/roles.js";
 import { customRateLimit } from "../middlewares/rateLimit.js";
@@ -43,7 +46,7 @@ router.get(
 
 router.get("/:id", getCourseById);
 
-router.get("/:id/details", getCourseDetails);
+router.get("/:id/details", optionalAuthenticate, getCourseDetails);
 
 router.get(
   "/:id/enrollment",
@@ -56,6 +59,22 @@ router.post(
   customRateLimit(1, 10),
   authenticate,
   enrollInCourse,
+);
+
+router.patch(
+  "/:id/publish",
+  customRateLimit(1, 10),
+  authenticate,
+  authorize(roles.CREATOR, roles.ADMIN),
+  publishCourse,
+);
+
+router.patch(
+  "/:id/unpublish",
+  customRateLimit(1, 10),
+  authenticate,
+  authorize(roles.CREATOR, roles.ADMIN),
+  unpublishCourse,
 );
 
 router.patch(

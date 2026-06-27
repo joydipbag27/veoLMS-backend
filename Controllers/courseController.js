@@ -11,13 +11,13 @@ export const createCourse = async (req, res) => {
   const { success, data, error } = createCourseSchema.safeParse(req.body);
   if (!success) return errorResponse(res, 400, error.issues[0].message);
 
-  const { title, description, thumbnail, price, category, level, status } = data;
-
+  const { title, description, thumbnailUrl, price, category, level, status } = data;
   try {
     const newCourse = await Course.create({
-      title, description, thumbnail,
+      title, description, thumbnailUrl,
       creator: req.user._id,
-      price, category, level, status,
+      price, category, level,
+      status: "Draft",
     });
 
     return successResponse(res, 201, "Course created successfully", { course: newCourse });
@@ -102,12 +102,20 @@ export const getCourseDetails = async (req, res) => {
     const sections = await Section.find({ course: id }).sort({ order: 1 }).lean();
     const lessons = await Lesson.find({ course: id }).sort({ order: 1 }).populate("video").lean();
 
+    const isCreator = req.user && (req.user.role === "ADMIN" || course.creator._id.toString() === req.user._id.toString());
+
     const lessonsBySection = {};
     for (const lesson of lessons) {
-      const { video, ...safeLesson } = lesson;
-      const secId = safeLesson.section.toString();
+      let finalLesson;
+      if (isCreator) {
+        finalLesson = lesson;
+      } else {
+        const { video, ...safeLesson } = lesson;
+        finalLesson = safeLesson;
+      }
+      const secId = finalLesson.section.toString();
       if (!lessonsBySection[secId]) lessonsBySection[secId] = [];
-      lessonsBySection[secId].push(safeLesson);
+      lessonsBySection[secId].push(finalLesson);
     }
 
     const formattedSections = sections.map((sec) => ({
@@ -145,6 +153,85 @@ export const updateCourse = async (req, res) => {
   }
 };
 
+// PUBLISH COURSE
+export const publishCourse = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const course = await Course.findById(id);
+    if (!course) return errorResponse(res, 404, "Course not found");
+
+    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
+      return errorResponse(res, 403, "You do not have permission to publish this course");
+    }
+
+    if (course.status === "Published") {
+      return errorResponse(res, 400, "Course is already published");
+    }
+
+    // Check: at least one section
+    const sections = await Section.find({ course: id }).lean();
+    if (sections.length === 0) {
+      return errorResponse(res, 400, "Course must have at least one section to be published");
+    }
+
+    // Check: every section must have at least one lesson
+    const sectionIds = sections.map((s) => s._id);
+    const lessons = await Lesson.find({ section: { $in: sectionIds } }).lean();
+
+    const sectionsWithLessons = new Set(lessons.map((l) => l.section.toString()));
+    for (const section of sections) {
+      if (!sectionsWithLessons.has(section._id.toString())) {
+        return errorResponse(
+          res,
+          400,
+          `Every section must have at least one lesson. Section "${section.title}" is empty.`
+        );
+      }
+    }
+
+    // Check: every lesson must have a video attached
+    const lessonsWithoutVideo = lessons.filter((l) => !l.video);
+    if (lessonsWithoutVideo.length > 0) {
+      return errorResponse(
+        res,
+        400,
+        `Every lesson must have a video attached. ${lessonsWithoutVideo.length} lesson(s) are missing videos.`
+      );
+    }
+
+    course.status = "Published";
+    await course.save();
+    return successResponse(res, 200, "Course published successfully", { course });
+  } catch (err) {
+    console.error("[publishCourse] Unexpected error:", err);
+    return errorResponse(res, 500, "Failed to publish course");
+  }
+};
+
+// UNPUBLISH COURSE
+export const unpublishCourse = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const course = await Course.findById(id);
+    if (!course) return errorResponse(res, 404, "Course not found");
+
+    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
+      return errorResponse(res, 403, "You do not have permission to unpublish this course");
+    }
+
+    if (course.status === "Draft") {
+      return errorResponse(res, 400, "Course is already in draft state");
+    }
+
+    course.status = "Draft";
+    await course.save();
+    return successResponse(res, 200, "Course unpublished successfully", { course });
+  } catch (err) {
+    console.error("[unpublishCourse] Unexpected error:", err);
+    return errorResponse(res, 500, "Failed to unpublish course");
+  }
+};
+
 // DELETE COURSE (cascading)
 export const deleteCourse = async (req, res) => {
   try {
@@ -156,13 +243,12 @@ export const deleteCourse = async (req, res) => {
       return errorResponse(res, 403, "You do not have permission to delete this course");
     }
 
-    // Cascade-delete associated Media from B2 and MongoDB
+    // Cascade-delete associated Media (videos) from B2 and MongoDB
     const lessons = await Lesson.find({ course: id }).select("video").lean();
     const mediaIds = lessons.map((l) => l.video).filter(Boolean);
     if (mediaIds.length > 0) {
-      const mediaRecords = await Media.find({ _id: { $in: mediaIds } }).lean();
-      const storageKeys = mediaRecords.map((m) => m.storageKey);
-      if (storageKeys.length > 0) await permanentlyDeleteMultipleFromB2(storageKeys);
+      const keys = mediaIds.map((id) => id.toString());
+      await permanentlyDeleteMultipleFromB2(keys);
       await Media.deleteMany({ _id: { $in: mediaIds } });
     }
 
@@ -176,3 +262,4 @@ export const deleteCourse = async (req, res) => {
     return errorResponse(res, 500, "Failed to delete course");
   }
 };
+

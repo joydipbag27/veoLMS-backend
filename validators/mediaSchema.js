@@ -4,19 +4,21 @@ export const uploadUrlSchema = z.object({
   mimeType: z
     .string()
     .trim()
-    .min(1, "mimeType is required"),
+    .min(1, "mimeType is required")
+    .regex(/^video\//, "Only video uploads are allowed"),
 });
 
 export const confirmUploadSchema = z.object({
-  storageKey: z
+  mediaId: z
     .string()
-    .trim()
-    .min(1, "storageKey is required"),
+    .regex(/^[a-f\d]{24}$/i, "Invalid media ID"),
   mimeType: z
     .string()
     .trim()
-    .min(1, "mimeType is required"),
+    .min(1, "mimeType is required")
+    .regex(/^video\//, "Only video uploads are allowed"),
   size: z
     .number()
     .positive("size must be a positive number"),
 });
+

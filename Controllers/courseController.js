@@ -14,6 +14,7 @@ import {
   generateThumbnailUploadUrl,
   deleteThumbnailFromS3,
   getThumbnailMetadata,
+  deleteVideoFromS3,
 } from "../config/awsS3Client.js";
 
 // CREATE COURSE
@@ -259,12 +260,28 @@ export const deleteCourse = async (req, res) => {
       await Media.findByIdAndDelete(course.thumbnail);
     }
 
-    // Cascade-delete associated Media (videos) from B2 and MongoDB
+    // Cascade-delete associated Media (videos) from storage and MongoDB
     const lessons = await Lesson.find({ course: id }).select("video").lean();
     const mediaIds = lessons.map((l) => l.video).filter(Boolean);
     if (mediaIds.length > 0) {
-      const keys = mediaIds.map((id) => id.toString());
-      await permanentlyDeleteMultipleFromB2(keys);
+      const medias = await Media.find({ _id: { $in: mediaIds } });
+      const b2Keys = [];
+      const s3Keys = [];
+      for (const media of medias) {
+        if (media.storageProvider === "AWS_S3") {
+          s3Keys.push(media._id.toString());
+        } else {
+          b2Keys.push(media._id.toString());
+        }
+      }
+      if (b2Keys.length > 0) {
+        await permanentlyDeleteMultipleFromB2(b2Keys);
+      }
+      if (s3Keys.length > 0) {
+        for (const key of s3Keys) {
+          await deleteVideoFromS3(key);
+        }
+      }
       await Media.deleteMany({ _id: { $in: mediaIds } });
     }
 

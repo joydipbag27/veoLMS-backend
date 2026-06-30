@@ -3,6 +3,9 @@ import {
   getLessonVideoUploadUrl,
   getLessonVideoReplaceUrl,
   confirmLessonVideoUpload,
+  getLessonVideoUploadUrlS3,
+  getLessonVideoReplaceUrlS3,
+  confirmLessonVideoUploadS3,
   getMediaDownloadUrl,
   deleteMedia,
 } from "../Controllers/mediaController.js";
@@ -35,6 +38,31 @@ router.post(
   authenticate,
   authorize(roles.CREATOR, roles.ADMIN),
   confirmLessonVideoUpload,
+);
+
+// S3 video upload routes
+router.post(
+  "/s3/lesson/:lessonId/upload-url",
+  customRateLimit(1, 15),
+  authenticate,
+  authorize(roles.CREATOR, roles.ADMIN),
+  getLessonVideoUploadUrlS3,
+);
+
+router.post(
+  "/s3/lesson/:lessonId/replace-url",
+  customRateLimit(1, 15),
+  authenticate,
+  authorize(roles.CREATOR, roles.ADMIN),
+  getLessonVideoReplaceUrlS3,
+);
+
+router.post(
+  "/s3/lesson/:lessonId/confirm",
+  customRateLimit(1, 15),
+  authenticate,
+  authorize(roles.CREATOR, roles.ADMIN),
+  confirmLessonVideoUploadS3,
 );
 
 router.get(

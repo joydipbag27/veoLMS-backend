@@ -6,6 +6,7 @@ import Enrollment from "../Models/enrollmentModel.js";
 import { createLessonSchema, updateLessonSchema } from "../validators/lessonSchema.js";
 import { successResponse, errorResponse } from "../utils/response.js";
 import { permanentlyDeleteMultipleFromB2 } from "../config/s3Client.js";
+import { deleteVideoFromS3 } from "../config/awsS3Client.js";
 
 // CREATE LESSON
 export const createLesson = async (req, res) => {
@@ -144,11 +145,15 @@ export const deleteLesson = async (req, res) => {
       return errorResponse(res, 403, "You do not have permission to delete this lesson");
     }
 
-    // Delete associated Media from B2 and MongoDB
+    // Delete associated Media from storage and MongoDB
     if (lesson.video) {
       const media = await Media.findById(lesson.video);
       if (media) {
-        await permanentlyDeleteMultipleFromB2([media._id.toString()]);
+        if (media.storageProvider === "AWS_S3") {
+          await deleteVideoFromS3(media._id.toString());
+        } else {
+          await permanentlyDeleteMultipleFromB2([media._id.toString()]);
+        }
         await media.deleteOne();
       }
     }

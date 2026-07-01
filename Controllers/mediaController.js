@@ -27,6 +27,7 @@ import {
 } from "../validators/mediaSchema.js";
 import { successResponse, errorResponse } from "../utils/response.js";
 import { createJob } from "../services/mediaConvertService.js";
+import { copyHlsFromS3ToB2, deleteS3Assets } from "../services/b2Service.js";
 
 // POST /media/lesson/:lessonId/upload-url
 export const getLessonVideoUploadUrl = async (req, res) => {
@@ -433,7 +434,7 @@ export const confirmLessonVideoUploadS3 = async (req, res) => {
 
     media.mimeType = data.mimeType;
     media.size = data.size;
-    media.status = "READY";
+    media.status = "PROCESSING";
     await media.save();
 
     // Associate media with lesson and clean up old media if exists
@@ -594,11 +595,29 @@ export const mediaProcessCompleted = async (req, res) => {
     }
 
     if (status === "COMPLETE") {
-      console.log(`Processing completed for mediaId: ${mediaId}`);
-      media.status = "READY";
-      media.jobId = jobId;
-      await media.save();
-      return successResponse(res, 200, "Processing completed successfully", { media });
+      try {
+        // 1. Copy HLS files from S3 to B2
+        const copiedKeys = await copyHlsFromS3ToB2(mediaId);
+
+        // 2. Perform best-effort cleanup of S3 assets
+        try {
+          await deleteS3Assets(mediaId, copiedKeys);
+        } catch (cleanupErr) {
+          console.error(`[mediaProcessCompleted] Cleanup failed (non-blocking) for mediaId ${mediaId}:`, cleanupErr);
+        }
+
+        media.status = "READY";
+        media.jobId = jobId;
+        await media.save();
+        return successResponse(res, 200, "Processing and copy completed successfully", { media });
+      } catch (copyErr) {
+        console.error(`[mediaProcessCompleted] HLS copy to B2 failed for mediaId ${mediaId}:`, copyErr);
+        media.status = "FAILED";
+        media.error = copyErr.message || "HLS copy to B2 failed";
+        media.jobId = jobId;
+        await media.save();
+        return errorResponse(res, 500, "HLS copy to B2 failed");
+      }
     }
 
     return errorResponse(res, 400, "Unknown job status");

@@ -42,7 +42,7 @@ export const mediaProcessingCompleteSchema = z.object({
     .min(1, "jobId is required"),
   status: z.enum(["COMPLETE", "ERROR"]),
   timestamp: z.any().optional(),
-  warnings: z.array(z.string()).optional(),
+  warnings: z.any().optional(),
   errorMessage: z.string().nullable().optional(),
 });
 
